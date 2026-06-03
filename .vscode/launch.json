@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "MSVC 编译并调试",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/生成/操作系统模拟器.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "msvc-build"
+        },
+        {
+            "name": "直接调试 (不编译)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/生成/操作系统模拟器.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "integratedTerminal"
+        }
+    ]
+}

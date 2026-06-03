@@ -1,0 +1,27 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/源码",
+                "D:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\include",
+                "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\ucrt",
+                "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\um",
+                "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\shared"
+            ],
+            "defines": [
+                "_WIN32"
+            ],
+            "compilerPath": "D:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe",
+            "compilerArgs": [
+                "/utf-8",
+                "/EHsc",
+                "/std:c++17"
+            ],
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}
