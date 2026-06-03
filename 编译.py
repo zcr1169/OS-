@@ -37,7 +37,7 @@ os.environ['LIB'] = ';'.join([
 os.environ['PATH'] = os.path.join(vc_dir, 'bin', 'Hostx64', 'x64') + ';' + os.environ.get('PATH', '')
 
 cl_exe = os.path.join(vc_dir, 'bin', 'Hostx64', 'x64', 'cl.exe')
-out_exe = os.path.join(out_dir, '操作系统模拟器.exe')
+out_exe = os.path.join(out_dir, 'OSCD.exe')
 
 obj_dir = os.path.join(out_dir, 'obj\\')
 os.makedirs(obj_dir, exist_ok=True)
