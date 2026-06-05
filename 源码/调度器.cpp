@@ -92,14 +92,15 @@ void Scheduler::stop() {
 }
 
 void Scheduler::restart() {
-    stop();
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        queues_.clear();
-        queues_.resize(3);
-    }
-    scheduleCount_ = 0;
-    start();
+    // 和start_sched的区别：保留队列和调度计数，从暂停的地方继续
+    bool wasRunning = running_.exchange(false);
+    stopRequested_ = true;
+    cv_.notify_all();
+    if (schedThread_.joinable()) schedThread_.join();
+
+    stopRequested_ = false;
+    running_ = true;
+    schedThread_ = std::thread(&Scheduler::schedulerLoop, this);
 }
 
 std::string Scheduler::step() {

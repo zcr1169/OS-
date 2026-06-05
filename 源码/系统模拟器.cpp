@@ -449,10 +449,6 @@ std::string OSSimulator::handleSchedulerCmd(const CommandParser::Command& cmd) {
     }
 
     if (cmd.name == "step") {
-        if (scheduler_.isRunning()) {
-            return "[警告] 调度器正在自动运行中(每500ms调度一次)!\n"
-                   "  手动step和自动调度会抢队列，请先 stop_sched 再手动step\n";
-        }
         return scheduler_.step();
     }
 
