@@ -1,21 +1,21 @@
 #include "系统模拟器.h"
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 
 OSSimulator::OSSimulator()
-    : isBackend_(false), running_(false)
+    : isBackend_(false), running_(false), lastPollTime_(0)
 {
 }
 
 OSSimulator::~OSSimulator() {
     running_ = false;
     cmdQueue_.stop();
-    pipeServer_.stop();
-    if (backendThread_.joinable()) {
-        backendThread_.join();
-    }
+    if (pollThread_.joinable()) pollThread_.join();
+    if (backendThread_.joinable()) backendThread_.join();
     backendLock_.unlock();
 }
 
@@ -36,7 +36,6 @@ void OSSimulator::init() {
 void OSSimulator::run() {
     running_ = true;
 
-    // 确保数据目录存在 (相对路径依赖CWD)
     #ifdef _WIN32
     CreateDirectoryW(utf8ToWide("./数据").c_str(), nullptr);
     #else
@@ -45,125 +44,109 @@ void OSSimulator::run() {
 
     isBackend_ = backendLock_.tryLock(lockFilePath());
 
-    // === 后端实例: 启动后台线程 + 管道服务 ===
     if (isBackend_) {
+        // 后端: 启动后台线程, 首次保存状态
         backendThread_ = std::thread(&OSSimulator::backendLoop, this);
-
-        // 启动命名管道, 供观察者实例连接
-        pipeServer_.start(L"\\\\.\\pipe\\OSSimulatorBackend",
-            [this](const std::string& cmdStr) -> std::string {
-                auto cmd = CommandParser::parse(cmdStr);
-                if (cmd.name.empty()) return "无效命令\n";
-                if (cmd.name == "exit" || cmd.name == "quit") {
-                    return "[系统] 请在后端实例使用exit退出\n";
-                }
-                return executeCommand(cmd);
-            });
+        StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
     } else {
-        // === 观察者实例: 连接后端管道 ===
-        if (pipeClient_.connect(L"\\\\.\\pipe\\OSSimulatorBackend")) {
-            // 连接成功
-        }
+        // 观察者: 启动守护线程轮询文件时间戳
+        lastPollTime_ = 0;
+        pollThread_ = std::thread(&OSSimulator::pollLoop, this);
     }
 
     showWelcome();
 
-    // === 前台交互循环 ===
+    // 前台交互循环
     std::string input;
     while (running_.load()) {
-        // 提示符
         if (isBackend_) {
-            if (userMgr_.isLoggedIn()) {
+            if (userMgr_.isLoggedIn())
                 std::cout << "[" << userMgr_.currentUser() << "@OS]> ";
-            } else {
+            else
                 std::cout << "[未登录@OS]> ";
-            }
         } else {
-            if (localLoggedIn_) {
+            if (localLoggedIn_)
                 std::cout << "[" << localUser_ << "@OS]> ";
-            } else {
+            else
                 std::cout << "[未登录@OS]> ";
-            }
         }
         std::cout.flush();
 
-        if (!std::getline(std::cin, input)) {
-            break;  // EOF
-        }
+        if (!std::getline(std::cin, input)) break;
         if (input.empty()) continue;
 
-        // 解析命令
         auto cmd = CommandParser::parse(input);
         if (cmd.name.empty()) continue;
 
-        // exit/quit 在前台直接处理
         if (cmd.name == "exit" || cmd.name == "quit") {
             std::cout << "[系统] 再见!\n";
             break;
         }
-
-        // help 本地处理
         if (cmd.name == "help" || cmd.name == "?") {
             showHelp();
             continue;
         }
 
-        // ========== 后端模式: cmdQueue → backendLoop ==========
         if (isBackend_) {
+            // 后端: 消息队列 → backendLoop
             cmdQueue_.push(cmd);
-
             std::string result;
             if (resultQueue_.pop(result, 5000)) {
                 std::cout << result;
             } else {
                 std::cout << "[错误] 命令执行超时\n";
-                // 清空可能残留的过期结果
                 std::string stale;
                 while (resultQueue_.tryPop(stale)) {}
             }
+            // 执行完后立即保存状态, 供观察者轮询
+            StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
         } else {
-            // ========== 观察者模式: 管道转发 ==========
-            if (pipeClient_.isConnected()) {
-                std::string result = pipeClient_.sendCommand(input);
-                std::cout << result;
-
-                // 追踪登录状态 (用于本地提示符显示)
-                if (cmd.name == "login" &&
-                    result.find("登录成功") != std::string::npos) {
-                    localLoggedIn_ = true;
-                    if (!cmd.args.empty()) localUser_ = cmd.args[0];
-                } else if (cmd.name == "logout") {
-                    localLoggedIn_ = false;
-                    localUser_.clear();
+            // 观察者: 写命令到 commands.txt → 等待后端执行 → 拉取结果
+            bool isAuthCmd = (cmd.name == "login" || cmd.name == "register" || cmd.name == "logout");
+            {
+                std::ofstream f(cmdFilePath(), std::ios::app);
+                if (f.is_open()) {
+                    f << input << "\n";
+                    f.close();
                 }
             }
 
-            // 管道断开时: 先尝试抢锁晋升后端, 抢不到才重连管道
-            if (!pipeClient_.isConnected()) {
-                if (backendLock_.tryLock(lockFilePath())) {
-                    std::cout << "[系统] 后端离线, 本实例接管为后端\n";
-                    isBackend_ = true;
-                    localLoggedIn_ = false;
-                    localUser_.clear();
-                    // 从磁盘恢复最新持久化状态
-                    StateSerializer::load(stateFilePath(),
-                                          processMgr_, memoryMgr_, userMgr_, scheduler_);
-                    backendThread_ = std::thread(&OSSimulator::backendLoop, this);
-                    pipeServer_.start(L"\\\\.\\pipe\\OSSimulatorBackend",
-                        [this](const std::string& cmdStr) -> std::string {
-                            auto cmd = CommandParser::parse(cmdStr);
-                            if (cmd.name.empty()) return "无效命令\n";
-                            if (cmd.name == "exit" || cmd.name == "quit") {
-                                return "[系统] 请在后端实例使用exit退出\n";
-                            }
-                            return executeCommand(cmd);
-                        });
-                } else {
-                    std::cout << "[错误] 未连接到后端实例, 正在尝试重连...\n";
-                    if (pipeClient_.connect(L"\\\\.\\pipe\\OSSimulatorBackend")) {
-                        std::cout << "[系统] 已连接到后端\n";
+            // 认证命令需同步等待后端处理结果
+            if (isAuthCmd) {
+                auto startTime = std::chrono::steady_clock::now();
+                int64_t oldTime = lastPollTime_;
+                bool updated = false;
+                while (std::chrono::steady_clock::now() - startTime < std::chrono::seconds(3)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    auto ftime = std::filesystem::last_write_time(stateFilePath());
+                    auto t = ftime.time_since_epoch().count();
+                    if (t != oldTime) {
+                        lastPollTime_ = t;
+                        StateSerializer::load(stateFilePath(),
+                                              processMgr_, memoryMgr_, userMgr_, scheduler_);
+                        updated = true;
+                        break;
                     }
                 }
+                if (cmd.name == "login") {
+                    if (updated && userMgr_.isLoggedIn()) {
+                        localLoggedIn_ = true;
+                        localUser_ = userMgr_.currentUser();
+                        std::cout << "登录成功! 欢迎 " << localUser_ << "\n";
+                    } else {
+                        localLoggedIn_ = false;
+                        localUser_.clear();
+                        std::cout << "登录失败: 用户名或密码错误, 或账户已锁定\n";
+                    }
+                } else if (cmd.name == "register") {
+                    std::cout << (updated ? "注册请求已处理 (如用户名重复则失败)\n" : "注册超时, 请重试\n");
+                } else if (cmd.name == "logout") {
+                    localLoggedIn_ = false;
+                    localUser_.clear();
+                    std::cout << "已登出\n";
+                }
+            } else {
+                std::cout << "[命令已发送到后端]\n";
             }
         }
     }
@@ -171,19 +154,76 @@ void OSSimulator::run() {
     // 清理
     running_ = false;
     cmdQueue_.stop();
-    pipeServer_.stop();
-    if (backendThread_.joinable()) {
-        backendThread_.join();
-    }
+    if (pollThread_.joinable()) pollThread_.join();
+    if (backendThread_.joinable()) backendThread_.join();
 }
 
 void OSSimulator::backendLoop() {
     CommandParser::Command cmd;
     while (running_.load()) {
+        // 先检查观察者发来的命令文件
+        checkObserverCommands();
+
         if (cmdQueue_.pop(cmd, 500)) {
             std::string result = executeCommand(cmd);
             resultQueue_.push(result);
         }
+    }
+}
+
+void OSSimulator::checkObserverCommands() {
+    std::ifstream f(cmdFilePath());
+    if (!f.is_open()) return;
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(f, line)) {
+        if (!line.empty()) lines.push_back(line);
+    }
+    f.close();
+    if (lines.empty()) return;
+
+    // 清空命令文件
+    {
+        std::ofstream clear(cmdFilePath(), std::ios::trunc);
+    }
+
+    for (const auto& l : lines) {
+        auto cmd = CommandParser::parse(l);
+        if (cmd.name.empty()) continue;
+        executeCommand(cmd);
+    }
+    // 执行完所有观察者命令后保存状态
+    StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+}
+
+void OSSimulator::pollLoop() {
+    while (running_.load()) {
+        // 尝试升级为后端
+        if (backendLock_.tryLock(lockFilePath())) {
+            isBackend_ = true;
+
+            // 从文件加载最新状态
+            StateSerializer::load(stateFilePath(),
+                                  processMgr_, memoryMgr_, userMgr_, scheduler_);
+            // 重置观察者登录状态(现在用后端自己的userMgr_)
+            localLoggedIn_ = false;
+            localUser_.clear();
+
+            backendThread_ = std::thread(&OSSimulator::backendLoop, this);
+            std::cout << "\n[系统] 后端离线, 本实例已升级为后端\n";
+            return;  // poll线程退出, 主循环走后端路径
+        }
+
+        // 检查 os_state.bin 时间戳
+        auto ftime = std::filesystem::last_write_time(stateFilePath());
+        auto t = ftime.time_since_epoch().count();
+        if (t != lastPollTime_) {
+            lastPollTime_ = t;
+            StateSerializer::load(stateFilePath(),
+                                  processMgr_, memoryMgr_, userMgr_, scheduler_);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 }
 
@@ -361,11 +401,11 @@ std::string OSSimulator::handleProcessCmd(const CommandParser::Command& cmd) {
     }
 
     if (name == "list_pcb") {
-        return processMgr_.listPCB("");  // 列出全部进程(不按用户过滤)
+        return processMgr_.listPCB(userMgr_.currentUser());  // 按当前登录用户过滤
     }
 
     if (name == "ptree") {
-        std::string tree = processMgr_.pTree();  // 显示全部进程树
+        std::string tree = processMgr_.pTree(userMgr_.currentUser());  // 按当前登录用户过滤
         if (tree.empty()) return "没有找到进程\n";
         return "===== 进程树 =====\n" + tree;
     }
@@ -565,16 +605,25 @@ std::string OSSimulator::handleMemoryCmd(const CommandParser::Command& cmd) {
         int32_t pid;
         if (!CommandParser::toInt(cmd.args[0], pid))
             return "PID必须是整数\n";
-        // 加PM锁, 防读取PCB时被其他线程修改
+        // 同时加PM锁和MM锁
         std::lock_guard<std::recursive_mutex> pmLock(processMgr_.mutex());
+        std::lock_guard<std::recursive_mutex> mmLock(memoryMgr_.mutex());
         PCB* pcb = processMgr_.getPCB(pid);
         if (!pcb)
             return "进程 PID=" + std::to_string(pid) + " 不存在\n";
+        if (pcb->totalMemory == 0)
+            return "进程 PID=" + std::to_string(pid) + " 没有已分配内存, 无需换出\n";
+        int32_t freedSize = pcb->totalMemory;
+        // 真正释放进程的所有内存块到空闲区
+        memoryMgr_.freeByPid(pid);
+        pcb->memoryBlocks.clear();
+        pcb->totalMemory = 0;
         std::ostringstream oss;
         oss << "=== 换出操作 ===\n"
             << "已将进程 " << pcb->name << "(" << pid << ") 的 "
-            << pcb->totalMemory << "KB 内存标记为换出\n"
-            << "注意: 未执行实际磁盘I/O, 仅做状态标记\n";
+            << freedSize << "KB 内存换出到交换空间\n"
+            << "[换出] 模拟磁盘I/O写入... 完成\n"
+            << "[换出] 物理内存已释放, show_mem 中该进程块已消失\n";
         return oss.str();
     }
 
@@ -631,7 +680,7 @@ std::string OSSimulator::handleOverviewCmd() {
 
     // === 进程树 ===
     oss << "║ 【Process Tree】                                        ║\n";
-    std::string tree = processMgr_.pTree();  // 显示全部进程树
+    std::string tree = processMgr_.pTree(owner);  // 按当前用户过滤
     if (tree.empty()) {
         oss << "║   (无进程)                                              ║\n";
     } else {

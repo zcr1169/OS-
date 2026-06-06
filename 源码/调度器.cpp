@@ -11,7 +11,7 @@ Scheduler::Scheduler()
     : pm_(nullptr)
     , running_(false)
     , stopRequested_(false)
-    , interval_(std::chrono::milliseconds(500))
+    , interval_(std::chrono::milliseconds(2000))
     , scheduleCount_(0)
 {
     queues_.resize(3);

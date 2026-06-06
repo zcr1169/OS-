@@ -16,3 +16,10 @@
 *.lock
 __pycache__/
 ~$*
+
+# 编辑器/工具配置
+.agents/
+.claude/
+.codegraph/
+.reasonix/
+skills-lock.json
