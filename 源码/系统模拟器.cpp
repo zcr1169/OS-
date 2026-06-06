@@ -21,6 +21,10 @@ OSSimulator::~OSSimulator() {
 
 void OSSimulator::init() {
     scheduler_.init(&processMgr_);
+    // 设置进程终止回调: 自动释放该进程占用的内存
+    scheduler_.setOnTerminate([this](int32_t pid) {
+        memoryMgr_.freeByPid(pid);
+    });
 
     if (StateSerializer::fileExists(stateFilePath())) {
         if (StateSerializer::load(stateFilePath(),
@@ -338,8 +342,8 @@ std::string OSSimulator::handleProcessCmd(const CommandParser::Command& cmd) {
         int32_t pid = processMgr_.createPCB(pname, priority, ppid, owner, burst);
         if (pid < 0)
             return "创建失败: 父进程PID=" + std::to_string(ppid) + " 不存在\n";
-        // 加入调度队列
-        scheduler_.enqueue(pid, priority);
+        // 加入调度队列（新进程默认入Q0 — MLFQ规则）
+        scheduler_.enqueue(pid, 0);
         return "进程创建成功! PID=" + std::to_string(pid)
                + " 名称=" + pname + " 优先级=" + std::to_string(priority)
                + " 需要CPU=" + std::to_string(burst) + "\n";
@@ -385,7 +389,7 @@ std::string OSSimulator::handleProcessCmd(const CommandParser::Command& cmd) {
         std::lock_guard<std::recursive_mutex> pmLock(processMgr_.mutex());
         if (processMgr_.wakeupPCB(pid)) {
             PCB* pcb = processMgr_.getPCB(pid);
-            if (pcb) scheduler_.enqueue(pid, pcb->priority);
+            if (pcb) scheduler_.enqueue(pid, 0);  // 唤醒后重置Q0
             return "进程 PID=" + std::to_string(pid) + " 已唤醒\n";
         }
         return "唤醒失败: 进程未处于阻塞状态\n";

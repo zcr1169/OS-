@@ -8,13 +8,14 @@
 #include <chrono>
 #include <condition_variable>
 #include <thread>
+#include <functional>
 
 class ProcessManager;
 
 // 多级反馈队列调度器
-// Q0: 优先级0-3, 时间片1
-// Q1: 优先级4-7, 时间片2
-// Q2: 优先级8-15, 时间片4
+// Q0: 优先级0-3, 时间片2
+// Q1: 优先级4-7, 时间片4
+// Q2: 优先级8-15, 时间片8
 // 用完时间片降级, 定期老化防饥饿
 class Scheduler {
 public:
@@ -59,6 +60,9 @@ public:
     // 获取时间片
     int getTimeSlice(int queueIdx) const;
 
+    // 设置进程终止回调(释放内存等)
+    void setOnTerminate(std::function<void(int32_t)> cb) { onTerminate_ = cb; }
+
     // 锁(注意: condition_variable只能用std::mutex)
     std::mutex& mutex() const { return mtx_; }
 
@@ -85,4 +89,5 @@ private:
     static const int TIME_SLICE[3];
     static const int AGE_INTERVAL = 10;
     int scheduleCount_;
+    std::function<void(int32_t)> onTerminate_;  // 进程终止回调
 };

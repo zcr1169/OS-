@@ -68,7 +68,7 @@ void Scheduler::start() {
             if (pid == 1) continue;  // init不参与调度
             PCB* pcb = pm_->getPCB(pid);
             if (pcb && pcb->state == PCB::READY && pcb->priority >= 0) {
-                enqueue(pid, pcb->priority);
+                enqueue(pid, 0);  // 新进程默认入Q0
             }
         }
     }
@@ -174,10 +174,14 @@ std::string Scheduler::step() {
             << "   决策: Q" << qIdx << " 非空 → 取 " << pcb->name
             << " → 时间片 " << timeSlice << " | ";
 
-        // 进程执行完毕 → 自动终止, 不再入队
+        // 进程执行完毕 → 自动终止, 释放内存
         if (pcb->cpuTime >= pcb->burstTime) {
             pcb->state = PCB::TERMINATED;
             oss << "CPU " << pcb->cpuTime << " >= " << pcb->burstTime << " → 进程完成! 已自动终止\n";
+            // 释放该进程占用的所有内存
+            if (onTerminate_) onTerminate_(pid);
+            pcb->memoryBlocks.clear();
+            pcb->totalMemory = 0;
             scheduleCount_++;
             if (scheduleCount_ % AGE_INTERVAL == 0) {
                 agePriorities();
@@ -260,8 +264,7 @@ std::string Scheduler::step() {
             if (pid == 1) continue;
             PCB* pcb = pm_->getPCB(pid);
             if (pcb && pcb->state == PCB::READY) {
-                int qIdx2 = priorityToQueue(pcb->priority);
-                queues_[qIdx2].push_back(pid);
+                queues_[0].push_back(pid);  // 回填到Q0
                 filled++;
             }
         }
