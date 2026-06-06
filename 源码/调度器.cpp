@@ -5,7 +5,7 @@
 #include <thread>
 #include <unordered_map>
 
-const int Scheduler::TIME_SLICE[3] = {1, 2, 4};
+const int Scheduler::TIME_SLICE[3] = {2, 4, 8};
 
 Scheduler::Scheduler()
     : pm_(nullptr)
@@ -112,6 +112,27 @@ std::string Scheduler::step() {
 
     std::ostringstream oss;
 
+    // === 输出当前队列快照 ===
+    oss << "当前队列状态:\n";
+    {
+        const char* rangeLabels[] = {"优先级 0-3", "优先级 4-7", "优先级 8-15"};
+        for (int i = 0; i < 3; i++) {
+            oss << "  Q" << i << "(" << rangeLabels[i] << "): ";
+            if (queues_[i].empty()) {
+                oss << "(空)";
+            } else {
+                bool first = true;
+                for (int32_t qpid : queues_[i]) {
+                    if (!first) oss << " -> "; first = false;
+                    PCB* qpcb = pm_->getPCB(qpid);
+                    if (qpcb) oss << qpcb->name << "(" << qpid << ")";
+                    else oss << "?" << qpid;
+                }
+            }
+            oss << "\n";
+        }
+    }
+
     for (int qIdx = 0; qIdx < 3; qIdx++) {
         auto& q = queues_[qIdx];
         if (q.empty()) continue;
@@ -145,19 +166,43 @@ std::string Scheduler::step() {
         pcb->state = PCB::RUNNING;
         pcb->cpuTime += timeSlice;
 
-        oss << "[调度] 选中 PID=" << pid << " (" << pcb->name
-            << "), 队列Q" << qIdx
-            << ", 时间片=" << timeSlice
-            << ", CPU=" << pcb->cpuTime << "/" << pcb->burstTime << "\n";
+        oss << "[调度] >> 选中 PID=" << pid << " (" << pcb->name
+            << ") 来自 Q" << qIdx
+            << "(优先级 " << (qIdx <= 1 ? (std::to_string(qIdx*4) + "-" + std::to_string(qIdx*4+3)) : "8-15") << ")"
+            << " | 时间片=" << timeSlice
+            << " | CPU=" << pcb->cpuTime << "/" << pcb->burstTime << "\n"
+            << "   决策: Q" << qIdx << " 非空 → 取 " << pcb->name
+            << " → 时间片 " << timeSlice << " | ";
 
         // 进程执行完毕 → 自动终止, 不再入队
         if (pcb->cpuTime >= pcb->burstTime) {
             pcb->state = PCB::TERMINATED;
-            oss << "[完成] PID=" << pid << " (" << pcb->name << ") 已执行完毕, 自动终止\n";
+            oss << "CPU " << pcb->cpuTime << " >= " << pcb->burstTime << " → 进程完成! 已自动终止\n";
             scheduleCount_++;
             if (scheduleCount_ % AGE_INTERVAL == 0) {
                 agePriorities();
+                oss << "   ⚡ 老化触发: Q2/Q1 队首进程已提升优先级\n";
             }
+            // 输出执行后的队列状态
+            oss << "   执行后队列: ";
+            {
+                bool hasAny = false;
+                for (int i = 0; i < 3; i++) {
+                    if (!queues_[i].empty()) {
+                        if (hasAny) oss << " | "; hasAny = true;
+                        oss << "Q" << i << "=";
+                        bool fst = true;
+                        for (int32_t qpid : queues_[i]) {
+                            if (!fst) oss << "->"; fst = false;
+                            PCB* qpcb = pm_->getPCB(qpid);
+                            if (qpcb) oss << qpcb->name << "(" << qpid << ")";
+                            else oss << "?" << qpid;
+                        }
+                    }
+                }
+                if (!hasAny) oss << "(全空)";
+            }
+            oss << "\n";
             return oss.str();
         }
 
@@ -169,28 +214,64 @@ std::string Scheduler::step() {
         targetQ = std::min(targetQ, 2);
         queues_[targetQ].push_back(pid);
 
+        if (targetQ > qIdx) {
+            oss << "CPU " << pcb->cpuTime << " < " << pcb->burstTime << " → 时间片耗尽, 降级 Q" << qIdx << "→Q" << targetQ << "\n";
+        } else {
+            oss << "CPU " << pcb->cpuTime << " < " << pcb->burstTime << " → 已在最低级 Q" << targetQ << ", 继续排队\n";
+        }
+
         scheduleCount_++;
 
         if (scheduleCount_ % AGE_INTERVAL == 0) {
             agePriorities();
+            oss << "   ⚡ 老化触发: Q2/Q1 队首进程已提升优先级\n";
         }
+
+        // 输出执行后的队列状态
+        oss << "   执行后队列: ";
+        {
+            bool hasAny = false;
+            for (int i = 0; i < 3; i++) {
+                if (!queues_[i].empty()) {
+                    if (hasAny) oss << " | "; hasAny = true;
+                    oss << "Q" << i << "=";
+                    bool fst = true;
+                    for (int32_t qpid : queues_[i]) {
+                        if (!fst) oss << "->"; fst = false;
+                        PCB* qpcb = pm_->getPCB(qpid);
+                        if (qpcb) oss << qpcb->name << "(" << qpid << ")";
+                        else oss << "?" << qpid;
+                    }
+                }
+            }
+            if (!hasAny) oss << "(全空)";
+        }
+        oss << "\n";
 
         return oss.str();
     }
 
+    // 队列全空时, 尝试从进程表回填就绪进程
     if (pm_) {
+        oss << "所有调度队列为空, 尝试回填就绪进程...\n";
         auto pids = pm_->getSchedulableProcesses();
+        int filled = 0;
         for (int32_t pid : pids) {
-            if (pid == 1) continue;  // init不参与调度
+            if (pid == 1) continue;
             PCB* pcb = pm_->getPCB(pid);
             if (pcb && pcb->state == PCB::READY) {
-                int qIdx = priorityToQueue(pcb->priority);
-                queues_[qIdx].push_back(pid);
+                int qIdx2 = priorityToQueue(pcb->priority);
+                queues_[qIdx2].push_back(pid);
+                filled++;
             }
+        }
+        if (filled > 0) {
+            oss << "  回填了 " << filled << " 个进程, 请再次执行 step\n";
+            return oss.str();
         }
     }
 
-    return "所有调度队列为空，无可调度进程\n";
+    return "所有调度队列为空, 无可调度进程\n";
 }
 
 std::string Scheduler::status() const {

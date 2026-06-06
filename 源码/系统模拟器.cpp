@@ -223,7 +223,7 @@ void OSSimulator::pollLoop() {
                                   processMgr_, memoryMgr_, userMgr_, scheduler_);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 }
 
@@ -458,7 +458,7 @@ std::string OSSimulator::handleProcessCmd(const CommandParser::Command& cmd) {
                 scheduler_.enqueue(pid, newPrio);
             }
             return "进程 PID=" + std::to_string(pid)
-                   + " 优先级已修改为 " + std::to_string(newPrio) + "\n";
+                   + " 优先级已修改为 " + std::to_string(newPrio) + ", 已移至新队列\n";
         }
         return "修改失败: PID不存在或优先级范围无效(0-15)\n";
     }
