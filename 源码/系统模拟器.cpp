@@ -9,6 +9,24 @@
 OSSimulator::OSSimulator()
     : isBackend_(false), running_(false), lastPollTime_(0)
 {
+    // 计算exe所在目录, 数据文件放在exe旁边
+#ifdef _WIN32
+    wchar_t wbuf[MAX_PATH];
+    GetModuleFileNameW(nullptr, wbuf, MAX_PATH);
+    std::wstring exePathW(wbuf);
+    auto pos = exePathW.find_last_of(L"\\/");
+    if (pos != std::wstring::npos) {
+        std::wstring dirW = exePathW.substr(0, pos) + L"\\数据";
+        // 转回UTF-8
+        int len = WideCharToMultiByte(CP_UTF8, 0, dirW.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        dataDir_.resize(len - 1);
+        WideCharToMultiByte(CP_UTF8, 0, dirW.c_str(), -1, &dataDir_[0], len, nullptr, nullptr);
+    } else {
+        dataDir_ = ".\\数据";
+    }
+#else
+    dataDir_ = "./数据";
+#endif
 }
 
 OSSimulator::~OSSimulator() {
@@ -41,9 +59,9 @@ void OSSimulator::run() {
     running_ = true;
 
     #ifdef _WIN32
-    CreateDirectoryW(utf8ToWide("./数据").c_str(), nullptr);
+    CreateDirectoryW(utf8ToWide(dataDir_).c_str(), nullptr);
     #else
-    mkdir("./数据", 0755);
+    mkdir(dataDir_.c_str(), 0755);
     #endif
 
     isBackend_ = backendLock_.tryLock(lockFilePath());

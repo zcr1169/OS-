@@ -26,9 +26,9 @@ public:
     std::string executeCommand(const CommandParser::Command& cmd);
     bool isBackend() const { return isBackend_; }
 
-    std::string stateFilePath() const { return "./数据/os_state.bin"; }
-    std::string lockFilePath() const { return "./数据/os_instance.lock"; }
-    std::string cmdFilePath() const { return "./数据/commands.txt"; }
+    std::string stateFilePath() const { return dataDir_ + "/os_state.bin"; }
+    std::string lockFilePath() const { return dataDir_ + "/os_instance.lock"; }
+    std::string cmdFilePath() const { return dataDir_ + "/commands.txt"; }
 
 private:
     void backendLoop();
@@ -64,6 +64,7 @@ private:
     bool localLoggedIn_ = false;
     std::string localUser_;
 
+    std::string dataDir_;  // 数据文件夹路径(基于exe所在目录)
     std::atomic<bool> running_;
     std::thread backendThread_;
 };
