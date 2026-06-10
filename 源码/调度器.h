@@ -1,6 +1,4 @@
-// ============================================================
-// 调度器 — 头文件声明
-// ============================================================
+// 调度器 — 头文件
 #pragma once
 #include "进程控制块.h"
 #include <vector>
@@ -15,25 +13,16 @@
 
 class ProcessManager;
 
-/**
- * Scheduler — 多级反馈队列调度器
- *
- * Q0: 优先级 0-3, 时间片 2
- * Q1: 优先级 4-7, 时间片 4
- * Q2: 优先级 8-15, 时间片 8
- *
- * 新进程默认入 Q0，时间片耗尽降级，唤醒/恢复重置 Q0。
- * 每 10 次调度老化一次，防止饥饿。
- */
+// MLFQ 调度器
+// Q0(优先级0-3,时间片2) Q1(4-7,4) Q2(8-15,8)
 class Scheduler {
 public:
     Scheduler();
     ~Scheduler();
 
     void init(ProcessManager* pm);
-    void enqueue(int32_t pid, int32_t priority);  // priority 决定进哪个队列
+    void enqueue(int32_t pid, int32_t priority);
     void dequeue(int32_t pid);
-
     void start();
     void stop();
     void restart();
@@ -41,7 +30,6 @@ public:
 
     std::string status() const;
     std::string queueStatus() const;
-
     bool isRunning() const { return running_.load(); }
 
     const std::deque<int32_t>& getQueue(int idx) const;
@@ -57,19 +45,15 @@ private:
     void agePriorities();
 
     ProcessManager* pm_;
-    std::vector<std::deque<int32_t>> queues_;  // 三个双端队列，存 PID
-
+    std::vector<std::deque<int32_t>> queues_;
     std::atomic<bool> running_;
     std::atomic<bool> stopRequested_;
     mutable std::mutex mtx_;
     std::condition_variable cv_;
-
     std::thread schedThread_;
-    std::chrono::milliseconds interval_;     // 调度间隔（默认 2000ms）
-
-    static const int TIME_SLICE[3];          // {2, 4, 8}
-    static const int AGE_INTERVAL = 10;      // 每 10 次调度触发老化
+    std::chrono::milliseconds interval_;
+    static const int TIME_SLICE[3];
+    static const int AGE_INTERVAL = 10;
     int scheduleCount_;
-
-    std::function<void(int32_t)> onTerminate_;  // 进程终止回调（释放内存）
+    std::function<void(int32_t)> onTerminate_;
 };

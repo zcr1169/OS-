@@ -1,6 +1,4 @@
-// ============================================================
-// 进程管理器 — 头文件声明
-// ============================================================
+// 进程管理器 — 头文件
 #pragma once
 #include "进程控制块.h"
 #include <unordered_map>
@@ -9,22 +7,6 @@
 #include <mutex>
 #include <functional>
 
-/**
- * ProcessManager — 进程管理器
- *
- * 核心数据结构：unordered_map<int32_t, PCB>
- *   - 键：PID（进程唯一标识）
- *   - 值：PCB（进程控制块，包含进程全部信息）
- *
- * 为什么用 unordered_map 而不是 vector？
- *   - 进程的 PID 不会连续（有删除操作），vector 会有空洞
- *   - unordered_map 的查找、插入、删除都是 O(1)
- *
- * 为什么用 recursive_mutex？
- *   - PCB 操作中有些函数会递归调用自己（比如 killChildren）
- *   - 普通 mutex 在同一个线程重复 lock 会死锁
- *   - recursive_mutex 允许同一个线程多次 lock
- */
 class ProcessManager {
 public:
     ProcessManager();
@@ -58,7 +40,7 @@ private:
     void pTreeRecursive(int32_t pid, int depth, const std::string& owner,
                         std::string& out) const;
 
-    std::unordered_map<int32_t, PCB> pcbs_;  // 核心数据结构：PCB 哈希表
-    int32_t nextPid_;                        // 下一个可用的 PID（自增分配）
-    mutable std::recursive_mutex mtx_;       // 多线程安全锁
+    std::unordered_map<int32_t, PCB> pcbs_;    // PID → PCB 哈希表
+    int32_t nextPid_;                          // 下一个可用 PID
+    mutable std::recursive_mutex mtx_;
 };
