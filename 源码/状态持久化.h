@@ -6,18 +6,25 @@
 #include "调度器.h"
 #include <string>
 #include <fstream>
+#include <unordered_map>
+#include <vector>
+#include <utility>
 
 class StateSerializer {
 public:
     static const uint32_t MAGIC = 0x4F535353;
     static const uint32_t VERSION = 1;
 
+    using SwapMap = std::unordered_map<int32_t, std::vector<std::pair<int32_t,int32_t>>>;
+
     static bool save(const std::string& filePath,
                      const ProcessManager& pm, const MemoryManager& mm,
-                     const UserManager& um, const Scheduler& sched);
+                     const UserManager& um, const Scheduler& sched,
+                     const SwapMap& swapped);
     static bool load(const std::string& filePath,
                      ProcessManager& pm, MemoryManager& mm,
-                     UserManager& um, Scheduler& sched);
+                     UserManager& um, Scheduler& sched,
+                     SwapMap& swapped);
     static bool fileExists(const std::string& filePath);
 
 private:

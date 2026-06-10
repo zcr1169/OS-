@@ -44,7 +44,7 @@ void OSSimulator::init() {
     });
 
     if (StateSerializer::fileExists(stateFilePath())) {
-        if (StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_))
+        if (StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_))
             return;
     }
     processMgr_.createPCB("init", 0, -1, "system", 999999);
@@ -62,7 +62,7 @@ void OSSimulator::run() {
     isBackend_ = backendLock_.tryLock(lockFilePath());
     if (isBackend_) {
         backendThread_ = std::thread(&OSSimulator::backendLoop, this);
-        StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+        StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
     } else {
         lastPollTime_ = 0;
         pollThread_ = std::thread(&OSSimulator::pollLoop, this);
@@ -108,7 +108,7 @@ void OSSimulator::run() {
                 std::string stale;
                 while (resultQueue_.tryPop(stale)) {}
             }
-            StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+            StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
         } else {
             bool isAuthCmd = (cmd.name == "login" || cmd.name == "register" || cmd.name == "logout");
             logPrint("前台(观察者)", "收到命令: " + cmd.raw + " → 写入 commands.txt");
@@ -126,7 +126,7 @@ void OSSimulator::run() {
                     auto t = ftime.time_since_epoch().count();
                     if (t != oldTime) {
                         lastPollTime_ = t;
-                        StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+                        StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
                         updated = true; break;
                     }
                 }
@@ -179,14 +179,14 @@ void OSSimulator::checkObserverCommands() {
             executeCommand(cmd);
         }
     }
-    StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+    StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
 }
 
 void OSSimulator::pollLoop() {
     while (running_.load()) {
         if (backendLock_.tryLock(lockFilePath())) {
             isBackend_ = true;
-            StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+            StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
             localLoggedIn_ = false; localUser_.clear();
             backendThread_ = std::thread(&OSSimulator::backendLoop, this);
             logPrint("观察者", "获取文件锁成功, 升级为后端");
@@ -197,7 +197,7 @@ void OSSimulator::pollLoop() {
         auto t = ftime.time_since_epoch().count();
         if (t != lastPollTime_) {
             lastPollTime_ = t;
-            StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+            StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
             logPrint("观察者", "检测到 os_state.bin 变化, 已重新加载状态");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -226,7 +226,7 @@ std::string OSSimulator::handleUserCmd(const CommandParser::Command& cmd) {
     if (cmd.name == "register") {
         return (cmd.args.size() < 2) ? "用法: register <用户名> <密码>\n"
             : (userMgr_.registerUser(cmd.args[0], cmd.args[1])
-                ? (StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_),
+                ? (StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_),
                    "注册成功! 用户名: " + cmd.args[0] + "\n")
                 : "注册失败: 用户名 " + cmd.args[0] + " 已存在\n");
     }
@@ -234,7 +234,7 @@ std::string OSSimulator::handleUserCmd(const CommandParser::Command& cmd) {
         if (cmd.args.size() < 2) return "用法: login <用户名> <密码>\n";
         std::string error;
         if (userMgr_.login(cmd.args[0], cmd.args[1], error)) {
-            StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+            StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
             return "登录成功! 欢迎 " + cmd.args[0] + "\n";
         }
         return "登录失败: " + error + "\n";
@@ -300,7 +300,18 @@ std::string OSSimulator::handleProcessCmd(const CommandParser::Command& cmd) {
     if (name == "show_pcb") {
         if (cmd.args.empty()) return "用法: show_pcb <PID>\n";
         int32_t pid; if (!CommandParser::toInt(cmd.args[0], pid)) return "PID必须是整数\n";
-        return processMgr_.showPCB(pid);
+        std::string result = processMgr_.showPCB(pid);
+        // 如果该进程有换出记录，附加换出状态
+        auto it = swappedOut_.find(pid);
+        if (it != swappedOut_.end() && !it->second.empty()) {
+            int32_t swapSize = 0;
+            for (const auto& blk : it->second) swapSize += blk.second;
+            result += "换出状态: 已换出 " + std::to_string(swapSize) + " KB 到交换空间\n"
+                      "        可用 swap_in " + std::to_string(pid) + " 恢复\n";
+        } else if (pid > 0 && processMgr_.getPCB(pid)) {
+            result += "换出状态: 未换出\n";
+        }
+        return result;
     }
 
     if (name == "list_pcb") return processMgr_.listPCB(owner);
@@ -442,11 +453,19 @@ std::string OSSimulator::handleMemoryCmd(const CommandParser::Command& cmd) {
         PCB* pcb = processMgr_.getPCB(pid);
         if (!pcb) return "进程 PID=" + std::to_string(pid) + " 不存在\n";
         if (pcb->totalMemory == 0) return "进程 PID=" + std::to_string(pid) + " 没有已分配内存, 无需换出\n";
+        // 保存内存块信息到 swappedOut_ 映射表（供 swap_in 和持久化使用）
         swappedOut_[pid] = pcb->memoryBlocks;
         int32_t sz = pcb->totalMemory;
-        memoryMgr_.freeByPid(pid); pcb->memoryBlocks.clear(); pcb->totalMemory = 0;
+        // 将物理内存块标记为"换出"，保留在 allocBlocks 中但 pid 变为 PID_SWAPPED
+        // 这样 show_mem 中能看到：|##PID2(128KB)|##换出(64KB)|--free(832KB)--|
+        memoryMgr_.swapOutPid(pid);
+        pcb->memoryBlocks.clear();
+        pcb->totalMemory = 0;
         return "=== 换出操作 ===\n已将进程 " + pcb->name + "(" + std::to_string(pid) + ") 的 "
-               + std::to_string(sz) + "KB 内存换出到交换空间\n[换出] 模拟磁盘I/O写入... 完成\n[换出] 物理内存已释放\n[换出] 可用 swap_in " + std::to_string(pid) + " 恢复\n";
+               + std::to_string(sz) + "KB 内存换出到交换空间\n"
+               + "[换出] 模拟磁盘I/O写入 " + std::to_string(sz) + "KB... 完成\n"
+               + "[换出] 物理内存块标记为(换出), show_mem 可见\n"
+               + "[换出] 可用 swap_in " + std::to_string(pid) + " 恢复\n";
     }
 
     if (cmd.name == "swap_in") {
@@ -460,21 +479,29 @@ std::string OSSimulator::handleMemoryCmd(const CommandParser::Command& cmd) {
         PCB* pcb = processMgr_.getPCB(pid);
         if (!pcb) return "换入失败: 进程 PID=" + std::to_string(pid) + " 不存在\n";
 
+        // 1) 从 allocBlocks 移除之前标记为"换出"的块，释放物理空间
+        memoryMgr_.removeSwappedByPid(pid);
+
+        // 2) 从 swappedOut_ 记录中重新分配物理内存
         int32_t rs = 0;
         for (const auto& blk : it->second) {
             int32_t addr = memoryMgr_.alloc(blk.second, pid);
             if (addr < 0) {
+                // 空间不足，回滚已分配的部分
                 for (const auto& rb : pcb->memoryBlocks) memoryMgr_.freeByAddr(rb.first);
                 pcb->memoryBlocks.clear(); pcb->totalMemory = 0;
-                return "换入失败: 可用内存不足\n";
+                return "换入失败: 可用内存不足, 无法恢复进程 " + std::to_string(pid) + "\n";
             }
             pcb->memoryBlocks.emplace_back(addr, blk.second);
             rs += blk.second;
         }
         pcb->totalMemory = rs;
         swappedOut_.erase(pid);
+
         return "=== 换入操作 ===\n已将进程 " + pcb->name + "(" + std::to_string(pid) + ") 的 "
-               + std::to_string(rs) + "KB 内存从交换区恢复\n[换入] 模拟磁盘I/O读取... 完成\n[换入] 物理内存已分配\n";
+               + std::to_string(rs) + "KB 内存从交换区恢复\n"
+               + "[换入] 模拟磁盘I/O读取 " + std::to_string(rs) + "KB... 完成\n"
+               + "[换入] 物理内存已重新分配, show_mem 可见\n";
     }
 
     return "内部错误\n";
@@ -483,11 +510,11 @@ std::string OSSimulator::handleMemoryCmd(const CommandParser::Command& cmd) {
 // ===== 持久化命令 =====
 std::string OSSimulator::handlePersistenceCmd(const CommandParser::Command& cmd) {
     if (cmd.name == "save") {
-        return StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_)
+        return StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_)
             ? "系统状态已保存到: " + stateFilePath() + "\n" : "保存失败!\n";
     }
     if (cmd.name == "load") {
-        return StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_)
+        return StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_)
             ? "系统状态已从文件恢复!\n" : "加载失败! 文件可能不存在或损坏\n";
     }
     if (cmd.name == "clear_save") {

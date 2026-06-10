@@ -22,6 +22,7 @@ public:
     static const int32_t PID_DATA = -2;
     static const int32_t PID_IO = -3;
     static const int32_t PID_KERNEL = -4;
+    static const int32_t PID_SWAPPED = -5;  // 已换出到交换空间的内存块
 
     MemoryManager();
     explicit MemoryManager(int32_t totalSize);
@@ -30,6 +31,11 @@ public:
     void freeByPid(int32_t pid);
     bool freeByAddr(int32_t addr);
     int32_t getPidByAddr(int32_t addr) const;
+
+    // swap 专用：将进程内存块标记为"换出"（留在 allocBlocks 但 pid 变 PID_SWAPPED）
+    void swapOutPid(int32_t pid);
+    // swap 专用：从 allocBlocks 移除某进程的"换出"标记块
+    void removeSwappedByPid(int32_t pid);
 
     std::string showMem() const;
     void compact();

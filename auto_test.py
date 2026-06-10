@@ -130,8 +130,8 @@ check('alloc data 成功消息', 'register admin 123456\nlogin admin 123456\nall
 
 # swap_out + swap_in
 out = run('register admin 123456\nlogin admin 123456\ncreate_pcb mt 5 1\nalloc 100 2\nswap_out 2\nswap_in 2\nexit\n')
-check_out('swap_out', out, '换出操作', '已释放')
-check_out('swap_in', out, '换入操作', '物理内存已分配')
+check_out('swap_out', out, '换出操作', '标记为')
+check_out('swap_in', out, '换入操作', '重新分配')
 
 # ========== 五、持久化 ==========
 print('\n--- 五、持久化 ---')

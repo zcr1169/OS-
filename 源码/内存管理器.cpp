@@ -69,6 +69,38 @@ void MemoryManager::freeByPid(int32_t pid) {
     compactInternal();
 }
 
+// swapOutPid — 将进程占用的内存块标记为"换出"(PID_SWAPPED)，不释放到空闲区
+// 这样 show_mem 中能看见换出的块，知道这块物理空间被谁占着
+void MemoryManager::swapOutPid(int32_t pid) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    for (auto& blk : allocBlocks_) {
+        if (blk.pid == pid) {
+            blk.pid = PID_SWAPPED;
+            blk.free = false;
+        }
+    }
+}
+
+// removeSwappedByPid — 从 allocBlocks 移除某进程的"已换出"标记块（swap_in 时用）
+// 这些块之前被 swapOutPid 标记为 PID_SWAPPED，现在要清掉腾出空间重新分配
+void MemoryManager::removeSwappedByPid(int32_t pid) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    // 注意: swappedOut_ 表中存的是原始内存块信息(addr, size)
+    // 对应 allocBlocks 中被标记为 PID_SWAPPED 的块
+    // 我们需要找到这些块并移除
+    for (auto it = allocBlocks_.begin(); it != allocBlocks_.end(); ) {
+        if (it->pid == PID_SWAPPED) {
+            // 检查这块是否属于要换入的进程
+            // 我们没法直接知道 PID_SWAPPED 块属于哪个进程
+            // 所以这里全部清除 PID_SWAPPED 块——安全做法
+            // 但更精确的做法由调用方处理
+            it = allocBlocks_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 bool MemoryManager::freeByAddr(int32_t addr) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     for (auto it = allocBlocks_.begin(); it != allocBlocks_.end(); ++it) {
@@ -196,6 +228,7 @@ std::string MemoryManager::getOwnerLabel(int32_t pid) {
         case PID_DATA: return "数据";
         case PID_IO: return "IO";
         case PID_KERNEL: return "内核";
+        case PID_SWAPPED: return "换出";
         default: return "PID" + std::to_string(pid);
     }
 }

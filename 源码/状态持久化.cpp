@@ -24,12 +24,13 @@ static std::ifstream openIfstream(const std::string& path, std::ios_base::openmo
 }
 #endif
 
-// save — 保存：文件头→用户→进程(含children+memoryBlocks)→内存→调度队列
+// save — 保存：文件头→用户→进程(含children+memoryBlocks)→内存→调度队列→swap
 bool StateSerializer::save(const std::string& filePath,
                            const ProcessManager& pm,
                            const MemoryManager& mm,
                            const UserManager& um,
-                           const Scheduler& sched) {
+                           const Scheduler& sched,
+                           const SwapMap& swapped) {
     auto out = openOfstream(filePath, std::ios::binary | std::ios::trunc);
     if (!out.is_open()) return false;
 
@@ -91,6 +92,18 @@ bool StateSerializer::save(const std::string& filePath,
         writeVal(out, sched.isRunning());
     }
 
+    {   // swap 换出记录（PID → 内存块列表）
+        writeVal(out, (int32_t)swapped.size());
+        for (const auto& entry : swapped) {
+            writeVal(out, entry.first);  // PID
+            writeVal(out, (int32_t)entry.second.size());  // 内存块数
+            for (const auto& blk : entry.second) {
+                writeVal(out, blk.first);   // 起始地址
+                writeVal(out, blk.second);  // 大小
+            }
+        }
+    }
+
     out.close();
     return true;
 }
@@ -100,7 +113,8 @@ bool StateSerializer::load(const std::string& filePath,
                            ProcessManager& pm,
                            MemoryManager& mm,
                            UserManager& um,
-                           Scheduler& sched) {
+                           Scheduler& sched,
+                           SwapMap& swapped) {
     auto in = openIfstream(filePath, std::ios::binary);
     if (!in.is_open()) return false;
 
@@ -119,6 +133,7 @@ bool StateSerializer::load(const std::string& filePath,
     MemoryManager::AllocAlgo loadedAlgo;
     std::deque<int32_t> loadedQs[3];
     bool savedSchedRunning = false;
+    SwapMap loadedSwapped;
 
     {   int32_t userCount; readVal(in, userCount);
         for (int32_t i = 0; i < userCount; i++) {
@@ -165,6 +180,20 @@ bool StateSerializer::load(const std::string& filePath,
         readVal(in, savedSchedRunning);
     }
 
+    {   // swap 换出记录
+        int32_t swapCount; readVal(in, swapCount);
+        for (int32_t i = 0; i < swapCount; i++) {
+            int32_t pid; readVal(in, pid);
+            int32_t blkCount; readVal(in, blkCount);
+            std::vector<std::pair<int32_t,int32_t>> blocks;
+            for (int32_t j = 0; j < blkCount; j++) {
+                int32_t addr, sz; readVal(in, addr); readVal(in, sz);
+                blocks.emplace_back(addr, sz);
+            }
+            loadedSwapped[pid] = std::move(blocks);
+        }
+    }
+
     for (int i = 0; i < 3; i++) {
         loadedQs[i].erase(std::remove_if(loadedQs[i].begin(), loadedQs[i].end(),
             [&loadedPcbs](int32_t pid) { return loadedPcbs.find(pid) == loadedPcbs.end(); }), loadedQs[i].end());
@@ -178,6 +207,8 @@ bool StateSerializer::load(const std::string& filePath,
     { std::lock_guard<std::recursive_mutex> lock(pm.mutex()); pm.getAllPCBsUnsafe() = loadedPcbs; pm.setNextPid(loadedNextPid); }
     { std::lock_guard<std::recursive_mutex> lock(mm.mutex()); mm.setFreeBlocks(loadedFreeBlocks); mm.setAllocatedBlocks(loadedAllocBlocks); mm.setAllocAlgo(loadedAlgo); }
     { std::lock_guard<std::mutex> lock(sched.mutex()); for (int i = 0; i < 3; i++) sched.setQueue(i, loadedQs[i]); }
+
+    swapped = std::move(loadedSwapped);
 
     if (savedSchedRunning) sched.start();
     std::cout << "[持久化] 状态已从文件恢复\n";
