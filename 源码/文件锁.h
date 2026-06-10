@@ -1,3 +1,23 @@
+// ============================================================
+// 跨平台文件锁
+//
+// 用于多实例场景下区分"后端"和"观察者"。
+// 先启动的实例获得文件锁成为后端，后启动的成为观察者。
+//
+// Windows 实现：
+//   用 CreateFileW + LockFileEx 实现。
+//   CreateFileW 支持 UTF-8 路径（转 UTF-16）。
+//   LockFileEx 加独占锁（EXCLUSIVE），非阻塞（FAIL_IMMEDIATELY）。
+//
+// POSIX 实现：
+//   用 open + flock 实现。
+//   flock LOCK_EX（独占锁）+ LOCK_NB（非阻塞）。
+//
+// 为什么用文件锁而不是其他 IPC 机制？
+//   1. 跨进程：Mutex 不能跨进程
+//   2. 自动释放：进程退出后 OS 自动解锁，不会残留
+//   3. 简单可靠：只需要一个空文件
+// ============================================================
 #pragma once
 #include <string>
 
@@ -5,7 +25,7 @@
 #include <windows.h>
 #include <stringapiset.h>
 
-/** UTF-8 string 转 UTF-16 wstring (Windows内部需要) */
+/** UTF-8 → UTF-16 转换（Windows API 需要） */
 inline std::wstring utf8ToWide(const std::string& utf8) {
     if (utf8.empty()) return L"";
     int len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
@@ -19,12 +39,6 @@ inline std::wstring utf8ToWide(const std::string& utf8) {
 #include <sys/file.h>
 #endif
 
-/**
- * 跨平台文件锁
- * 用于多实例场景下确保只有一个后台线程维护状态文件
- * Windows: 使用 CreateFileW + LockFileEx (支持Unicode路径)
- * POSIX:   使用 flock
- */
 class FileLock {
 public:
     FileLock() : owned_(false) {
@@ -36,15 +50,21 @@ public:
     }
     ~FileLock() { unlock(); }
 
-    /** 尝试获取文件锁(非阻塞) */
+    /**
+     * tryLock — 尝试获取文件锁（非阻塞）
+     *
+     * 打开锁文件 → 尝试加独占锁
+     * 成功 → owned_ = true，返回 true
+     * 失败（锁被别人占着）→ 关闭文件，返回 false
+     */
     bool tryLock(const std::string& filePath) {
 #ifdef _WIN32
         std::wstring wpath = utf8ToWide(filePath);
         handle_ = CreateFileW(wpath.c_str(),
                               GENERIC_READ | GENERIC_WRITE,
-                              FILE_SHARE_READ,
+                              FILE_SHARE_READ,          // 允许别人读
                               nullptr,
-                              OPEN_ALWAYS,
+                              OPEN_ALWAYS,              // 不存在就创建
                               FILE_ATTRIBUTE_NORMAL,
                               nullptr);
         if (handle_ == INVALID_HANDLE_VALUE) return false;
@@ -71,7 +91,7 @@ public:
 #endif
     }
 
-    /** 释放文件锁 */
+    /** unlock — 释放文件锁 */
     void unlock() {
         if (!owned_) return;
 #ifdef _WIN32

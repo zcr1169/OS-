@@ -1,86 +1,64 @@
+// ============================================================
+// 进程管理器 — 头文件声明
+// ============================================================
 #pragma once
 #include "进程控制块.h"
-#include <vector>
 #include <unordered_map>
-#include <mutex>
+#include <vector>
 #include <string>
+#include <mutex>
 #include <functional>
 
-// 进程管理器 - 进程的增删改查 + 进程树维护
+/**
+ * ProcessManager — 进程管理器
+ *
+ * 核心数据结构：unordered_map<int32_t, PCB>
+ *   - 键：PID（进程唯一标识）
+ *   - 值：PCB（进程控制块，包含进程全部信息）
+ *
+ * 为什么用 unordered_map 而不是 vector？
+ *   - 进程的 PID 不会连续（有删除操作），vector 会有空洞
+ *   - unordered_map 的查找、插入、删除都是 O(1)
+ *
+ * 为什么用 recursive_mutex？
+ *   - PCB 操作中有些函数会递归调用自己（比如 killChildren）
+ *   - 普通 mutex 在同一个线程重复 lock 会死锁
+ *   - recursive_mutex 允许同一个线程多次 lock
+ */
 class ProcessManager {
 public:
     ProcessManager();
 
-    // 创建进程, 返回PID, burstTime默认5
     int32_t createPCB(const std::string& name, int32_t priority,
                       int32_t ppid, const std::string& owner,
-                      int32_t burstTime = 5);
-
-    // 撤销进程(连带子进程一并撤销), onKill在删除每个进程前回调
-    bool killPCB(int32_t pid,
-                 std::function<void(int32_t)> onKill = nullptr);
-
-    // 阻塞进程
+                      int32_t burstTime);
+    bool killPCB(int32_t pid, std::function<void(int32_t)> onKill = nullptr);
     bool blockPCB(int32_t pid);
-
-    // 唤醒进程
     bool wakeupPCB(int32_t pid);
-
-    // 查看进程详细信息
     std::string showPCB(int32_t pid) const;
-
-    // 列出所有进程
-    std::string listPCB(const std::string& owner = "") const;
-
-    // 树形显示进程父子关系
-    std::string pTree(const std::string& owner = "") const;
-
-    // 挂起进程(移出调度队列)
+    std::string listPCB(const std::string& owner) const;
+    std::string pTree(const std::string& owner) const;
     bool suspendPCB(int32_t pid);
-
-    // 恢复挂起进程
     bool resumePCB(int32_t pid);
-
-    // 修改进程优先级
     bool renice(int32_t pid, int32_t newPriority);
 
-    // 获取某个PCB的指针(内部加了锁, 别长期持有)
     PCB* getPCB(int32_t pid);
     const PCB* getPCB(int32_t pid) const;
-
-    // 获取全部PCB
-    const std::unordered_map<int32_t, PCB>& getAllPCBs() const { return pcbs_; }
-
-    // 获取全部PCB(可写, load恢复用)
-    std::unordered_map<int32_t, PCB>& getAllPCBsUnsafe() { return pcbs_; }
-
-    // 获取某用户的所有进程
     std::vector<int32_t> getProcessesByUser(const std::string& owner) const;
-
-    // 获取可调度进程列表(就绪/运行态)
     std::vector<int32_t> getSchedulableProcesses() const;
-
-    // 下一个可用的PID
+    const auto& getAllPCBs() const { return pcbs_; }
+    auto& getAllPCBsUnsafe() { return pcbs_; }
     int32_t nextPid() const { return nextPid_; }
-
-    // 设置下一个PID(load恢复用)
     void setNextPid(int32_t pid) { nextPid_ = pid; }
-
-    // 清空所有进程
     void clear();
-
-    // 锁(外部调度/后台线程用)
     std::recursive_mutex& mutex() const { return mtx_; }
 
 private:
-    // 递归撤销子进程
     void killChildren(int32_t pid, std::function<void(int32_t)>& onKill);
-
-    // 递归打印进程树
     void pTreeRecursive(int32_t pid, int depth, const std::string& owner,
                         std::string& out) const;
 
-    std::unordered_map<int32_t, PCB> pcbs_;
-    int32_t nextPid_;
-    mutable std::recursive_mutex mtx_;
+    std::unordered_map<int32_t, PCB> pcbs_;  // 核心数据结构：PCB 哈希表
+    int32_t nextPid_;                        // 下一个可用的 PID（自增分配）
+    mutable std::recursive_mutex mtx_;       // 多线程安全锁
 };
