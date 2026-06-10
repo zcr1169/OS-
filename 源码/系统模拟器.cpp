@@ -276,7 +276,8 @@ std::string OSSimulator::executeCommand(const CommandParser::Command& cmd) {
     if (name == "alloc" || name == "free_mem" ||
         name == "show_mem" || name == "compact" ||
         name == "mem_stat" || name == "set_alloc_algo" ||
-        name == "pgfault" || name == "swap_out") {
+        name == "pgfault" || name == "swap_out" ||
+        name == "swap_in") {
         return handleMemoryCmd(cmd);
     }
 
@@ -456,7 +457,7 @@ std::string OSSimulator::handleProcessCmd(const CommandParser::Command& cmd) {
         std::lock_guard<std::recursive_mutex> pmLock(processMgr_.mutex());
         if (processMgr_.resumePCB(pid)) {
             PCB* pcb = processMgr_.getPCB(pid);
-            if (pcb) scheduler_.enqueue(pid, pcb->priority);
+            if (pcb) scheduler_.enqueue(pid, 0);  // 恢复后重置Q0
             return "进程 PID=" + std::to_string(pid) + " 已恢复\n";
         }
         return "恢复失败: 进程未处于挂起状态\n";
@@ -524,33 +525,70 @@ std::string OSSimulator::handleMemoryCmd(const CommandParser::Command& cmd) {
 
     if (cmd.name == "alloc") {
         if (cmd.args.size() < 2)
-            return "用法: alloc <大小(KB)> <PID>\n";
-        int32_t size, pid;
-        if (!CommandParser::toInt(cmd.args[0], size) ||
-            !CommandParser::toInt(cmd.args[1], pid))
-            return "参数必须是整数\n";
+            return "用法: alloc <大小(KB)> <目标>\n"
+                   "   目标: PID(数字) 或 data / io / kernel\n";
+        int32_t size;
+        if (!CommandParser::toInt(cmd.args[0], size))
+            return "大小必须是整数\n";
         if (size <= 0 || size > memoryMgr_.totalSize())
             return "大小必须在1-" + std::to_string(memoryMgr_.totalSize()) + "KB之间\n";
-        // 加PM锁, 防止验证PID后、分配内存前PID被kill
-        std::lock_guard<std::recursive_mutex> pmLock(processMgr_.mutex());
-        // 验证PID存在
-        if (!processMgr_.getPCB(pid))
-            return "分配失败: PID=" + std::to_string(pid) + " 不存在\n";
 
-        int32_t addr = memoryMgr_.alloc(size, pid);
-        if (addr < 0)
-            return "内存分配失败: 没有足够的连续空间\n";
+        int32_t pid;
+        bool isProcessTarget = false;
+        std::string targetLabel;
 
-        // 更新PCB内存信息
-        PCB* pcb = processMgr_.getPCB(pid);
-        if (pcb) {
-            pcb->memoryBlocks.emplace_back(addr, size);
-            pcb->totalMemory += size;
+        // 判断目标类型
+        if (CommandParser::toInt(cmd.args[1], pid)) {
+            // 数字PID → 必须分配给存在的进程
+            isProcessTarget = true;
+        } else {
+            // 非数字 → 检查是否为 data/io/kernel
+            std::string target = CommandParser::toLower(cmd.args[1]);
+            if (target == "data") {
+                pid = MemoryManager::PID_DATA;
+                targetLabel = "数据";
+            } else if (target == "io") {
+                pid = MemoryManager::PID_IO;
+                targetLabel = "IO";
+            } else if (target == "kernel") {
+                pid = MemoryManager::PID_KERNEL;
+                targetLabel = "内核";
+            } else {
+                return "无效目标: " + cmd.args[1] + " (支持: PID数字 / data / io / kernel)\n";
+            }
         }
 
-        return "内存分配成功! 起始地址=" + std::to_string(addr)
-               + "KB, 大小=" + std::to_string(size) + "KB, PID="
-               + std::to_string(pid) + "\n";
+        if (isProcessTarget) {
+            // 加PM锁, 防止验证PID后、分配内存前PID被kill
+            std::lock_guard<std::recursive_mutex> pmLock(processMgr_.mutex());
+            // 验证PID存在
+            if (!processMgr_.getPCB(pid))
+                return "分配失败: PID=" + std::to_string(pid) + " 不存在\n";
+
+            int32_t addr = memoryMgr_.alloc(size, pid);
+            if (addr < 0)
+                return "内存分配失败: 没有足够的连续空间\n";
+
+            // 更新PCB内存信息
+            PCB* pcb = processMgr_.getPCB(pid);
+            if (pcb) {
+                pcb->memoryBlocks.emplace_back(addr, size);
+                pcb->totalMemory += size;
+            }
+
+            return "内存分配成功! 起始地址=" + std::to_string(addr)
+                   + "KB, 大小=" + std::to_string(size) + "KB, PID="
+                   + std::to_string(pid) + "\n";
+        } else {
+            // 非进程目标(data/io/kernel)，直接分配
+            std::lock_guard<std::recursive_mutex> mmLock(memoryMgr_.mutex());
+            int32_t addr = memoryMgr_.alloc(size, pid);
+            if (addr < 0)
+                return "内存分配失败: 没有足够的连续空间\n";
+
+            return "内存分配成功! 起始地址=" + std::to_string(addr)
+                   + "KB, 大小=" + std::to_string(size) + "KB, 目标=" + targetLabel + "\n";
+        }
     }
 
     if (cmd.name == "free_mem") {
@@ -635,6 +673,8 @@ std::string OSSimulator::handleMemoryCmd(const CommandParser::Command& cmd) {
             return "进程 PID=" + std::to_string(pid) + " 不存在\n";
         if (pcb->totalMemory == 0)
             return "进程 PID=" + std::to_string(pid) + " 没有已分配内存, 无需换出\n";
+        // 保存换出的内存块信息(供swap_in恢复使用)
+        swappedOut_[pid] = pcb->memoryBlocks;
         int32_t freedSize = pcb->totalMemory;
         // 真正释放进程的所有内存块到空闲区
         memoryMgr_.freeByPid(pid);
@@ -645,7 +685,54 @@ std::string OSSimulator::handleMemoryCmd(const CommandParser::Command& cmd) {
             << "已将进程 " << pcb->name << "(" << pid << ") 的 "
             << freedSize << "KB 内存换出到交换空间\n"
             << "[换出] 模拟磁盘I/O写入... 完成\n"
-            << "[换出] 物理内存已释放, show_mem 中该进程块已消失\n";
+            << "[换出] 物理内存已释放, show_mem 中该进程块已消失\n"
+            << "[换出] 可用 swap_in " << pid << " 恢复\n";
+        return oss.str();
+    }
+
+    if (cmd.name == "swap_in") {
+        if (cmd.args.empty())
+            return "用法: swap_in <PID>\n";
+        int32_t pid;
+        if (!CommandParser::toInt(cmd.args[0], pid))
+            return "PID必须是整数\n";
+        // 检查是否之前swap_out过
+        auto it = swappedOut_.find(pid);
+        if (it == swappedOut_.end() || it->second.empty())
+            return "换入失败: 进程 PID=" + std::to_string(pid) + " 没有已换出的内存记录\n";
+
+        std::lock_guard<std::recursive_mutex> pmLock(processMgr_.mutex());
+        std::lock_guard<std::recursive_mutex> mmLock(memoryMgr_.mutex());
+
+        PCB* pcb = processMgr_.getPCB(pid);
+        if (!pcb)
+            return "换入失败: 进程 PID=" + std::to_string(pid) + " 不存在\n";
+
+        // 恢复内存块
+        int32_t restoredSize = 0;
+        for (const auto& blk : it->second) {
+            int32_t addr = memoryMgr_.alloc(blk.second, pid);
+            if (addr < 0) {
+                // 空间不足，回滚已分配的部分
+                for (const auto& rblk : pcb->memoryBlocks) {
+                    memoryMgr_.freeByAddr(rblk.first);
+                }
+                pcb->memoryBlocks.clear();
+                pcb->totalMemory = 0;
+                return "换入失败: 可用内存不足, 无法恢复进程 " + std::to_string(pid) + "\n";
+            }
+            pcb->memoryBlocks.emplace_back(addr, blk.second);
+            restoredSize += blk.second;
+        }
+        pcb->totalMemory = restoredSize;
+        swappedOut_.erase(pid);
+
+        std::ostringstream oss;
+        oss << "=== 换入操作 ===\n"
+            << "已将进程 " << pcb->name << "(" << pid << ") 的 "
+            << restoredSize << "KB 内存从交换区恢复\n"
+            << "[换入] 模拟磁盘I/O读取... 完成\n"
+            << "[换入] 物理内存已分配, show_mem 中该进程块已恢复\n";
         return oss.str();
     }
 
@@ -827,7 +914,8 @@ void OSSimulator::showHelp() {
     std::cout << "  mem_stat                           内存统计\n";
     std::cout << "  set_alloc_algo <FF|BF|WF>          切换分配算法\n";
     std::cout << "  pgfault                            模拟缺页中断\n";
-    std::cout << "  swap_out <PID>                     模拟换出操作\n\n";
+    std::cout << "  swap_out <PID>                     换出进程内存到交换空间\n";
+    std::cout << "  swap_in <PID>                      从交换空间换入进程内存\n\n";
 
     std::cout << "--- 持久化 (共20分) ---\n";
     std::cout << "  save          保存状态到二进制文件\n";

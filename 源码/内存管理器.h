@@ -50,6 +50,14 @@ public:
     // 内存碎片统计
     std::string memStat() const;
 
+    // 特殊PID常量(非进程目标)
+    static const int32_t PID_DATA = -2;    // 数据
+    static const int32_t PID_IO = -3;      // IO
+    static const int32_t PID_KERNEL = -4;  // 内核
+
+    // 获取内存块所属者的显示标签
+    static std::string getOwnerLabel(int32_t pid);
+
     // 切换分配算法
     void setAllocAlgo(AllocAlgo algo);
     AllocAlgo getAllocAlgo() const { return algo_; }

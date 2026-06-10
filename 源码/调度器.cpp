@@ -4,6 +4,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 const int Scheduler::TIME_SLICE[3] = {2, 4, 8};
 
@@ -125,7 +126,8 @@ std::string Scheduler::step() {
                 for (int32_t qpid : queues_[i]) {
                     if (!first) oss << " -> "; first = false;
                     PCB* qpcb = pm_->getPCB(qpid);
-                    if (qpcb) oss << qpcb->name << "(" << qpid << ")";
+                    if (qpcb) oss << qpcb->name << "(" << qpid << ")["
+                                  << qpcb->cpuTime << "/" << qpcb->burstTime << "]";
                     else oss << "?" << qpid;
                 }
             }
@@ -199,7 +201,8 @@ std::string Scheduler::step() {
                         for (int32_t qpid : queues_[i]) {
                             if (!fst) oss << "->"; fst = false;
                             PCB* qpcb = pm_->getPCB(qpid);
-                            if (qpcb) oss << qpcb->name << "(" << qpid << ")";
+                            if (qpcb) oss << qpcb->name << "(" << qpid << ")["
+                                          << qpcb->cpuTime << "/" << qpcb->burstTime << "]";
                             else oss << "?" << qpid;
                         }
                     }
@@ -243,7 +246,8 @@ std::string Scheduler::step() {
                     for (int32_t qpid : queues_[i]) {
                         if (!fst) oss << "->"; fst = false;
                         PCB* qpcb = pm_->getPCB(qpid);
-                        if (qpcb) oss << qpcb->name << "(" << qpid << ")";
+                        if (qpcb) oss << qpcb->name << "(" << qpid << ")["
+                                      << qpcb->cpuTime << "/" << qpcb->burstTime << "]";
                         else oss << "?" << qpid;
                     }
                 }
@@ -299,8 +303,8 @@ std::string Scheduler::queueStatus() const {
         }
     }
 
-    // 阶段2: 查进程名
-    std::unordered_map<int32_t, std::string> pidNames;
+    // 阶段2: 查进程名和CPU时间
+    std::unordered_map<int32_t, std::pair<std::string, std::string>> pidInfo;
     if (pm_) {
         std::lock_guard<std::recursive_mutex> pmLock(pm_->mutex());
         const auto& pcbs = pm_->getAllPCBs();
@@ -308,7 +312,8 @@ std::string Scheduler::queueStatus() const {
             for (int32_t pid : queuePids[i]) {
                 auto it = pcbs.find(pid);
                 if (it != pcbs.end()) {
-                    pidNames[pid] = it->second.name;
+                    pidInfo[pid] = {it->second.name,
+                        std::to_string(it->second.cpuTime) + "/" + std::to_string(it->second.burstTime)};
                 }
             }
         }
@@ -325,9 +330,9 @@ std::string Scheduler::queueStatus() const {
             for (size_t j = 0; j < queuePids[i].size(); j++) {
                 if (j > 0) oss << " -> ";
                 int32_t pid = queuePids[i][j];
-                auto it = pidNames.find(pid);
-                if (it != pidNames.end()) {
-                    oss << it->second << "(" << pid << ")";
+                auto it = pidInfo.find(pid);
+                if (it != pidInfo.end()) {
+                    oss << it->second.first << "(" << pid << ")[" << it->second.second << "]";
                 } else {
                     oss << "?" << pid;
                 }

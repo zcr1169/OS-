@@ -155,12 +155,12 @@ std::string MemoryManager::showMem() const {
     // 已分配块列表
     oss << "【已分配块列表】\n";
     oss << std::setw(12) << "起始地址" << std::setw(12) << "大小(KB)"
-        << std::setw(8) << "PID\n";
-    oss << std::string(32, '-') << "\n";
+        << std::setw(16) << "所属\n";
+    oss << std::string(40, '-') << "\n";
     for (const auto& blk : allocBlocks_) {
         oss << std::setw(8) << blk.startAddr << "KB"
             << std::setw(12) << blk.size
-            << std::setw(8) << blk.pid << "\n";
+            << std::setw(16) << getOwnerLabel(blk.pid) << "\n";
     }
 
     // ASCII内存条(仅调用一次getAllBlocks)
@@ -170,10 +170,27 @@ std::string MemoryManager::showMem() const {
         if (blk.free) {
             oss << "|--free(" << blk.size << "KB)--";
         } else {
-            oss << "|##PID" << blk.pid << "(" << blk.size << "KB)";
+            oss << "|##" << getOwnerLabel(blk.pid) << "(" << blk.size << "KB)";
         }
     }
-    oss << "|\n";
+    oss << "|\n\n";
+
+    // 内存块总览（统一列出所有块，按地址排序）
+    oss << "【内存块总览】\n";
+    oss << std::setw(12) << "起始地址" << std::setw(12) << "大小(KB)"
+        << std::setw(16) << "类型" << "\n";
+    oss << std::string(40, '-') << "\n";
+    for (const auto& blk : allBlocks) {
+        oss << std::setw(8) << blk.startAddr << "KB"
+            << std::setw(12) << blk.size
+            << std::setw(16);
+        if (blk.free) {
+            oss << "空闲";
+        } else {
+            oss << "已分配(" << getOwnerLabel(blk.pid) << ")";
+        }
+        oss << "\n";
+    }
 
     return oss.str();
 }
@@ -238,6 +255,16 @@ std::string MemoryManager::memStat() const {
 void MemoryManager::setAllocAlgo(AllocAlgo algo) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     algo_ = algo;
+}
+
+std::string MemoryManager::getOwnerLabel(int32_t pid) {
+    switch (pid) {
+        case -1: return "空闲";
+        case PID_DATA: return "数据";
+        case PID_IO: return "IO";
+        case PID_KERNEL: return "内核";
+        default: return "PID" + std::to_string(pid);
+    }
 }
 
 std::string MemoryManager::getAllocAlgoName() const {

@@ -12,6 +12,9 @@
 #include <atomic>
 #include <iostream>
 #include <chrono>
+#include <unordered_map>
+#include <vector>
+#include <utility>
 
 // 操作系统模拟器主控类
 // 后端实例(获文件锁): 后台线程维护状态, 定期保存到物理文件, 监听观察者命令文件
@@ -67,4 +70,7 @@ private:
     std::string dataDir_;  // 数据文件夹路径(基于exe所在目录)
     std::atomic<bool> running_;
     std::thread backendThread_;
+
+    // 换出内存记录(供swap_in恢复): PID → 内存块列表
+    std::unordered_map<int32_t, std::vector<std::pair<int32_t,int32_t>>> swappedOut_;
 };
