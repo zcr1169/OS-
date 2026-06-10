@@ -38,6 +38,7 @@ public:
 
     std::mutex& mutex() const { return mtx_; }
     void setOnTerminate(std::function<void(int32_t)> cb) { onTerminate_ = cb; }
+    void setLogCallback(std::function<void(const char*, const std::string&)> cb) { logCb_ = cb; }
 
 private:
     void schedulerLoop();
@@ -56,4 +57,5 @@ private:
     static const int AGE_INTERVAL = 10;
     int scheduleCount_;
     std::function<void(int32_t)> onTerminate_;
+    std::function<void(const char*, const std::string&)> logCb_;
 };

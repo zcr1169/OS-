@@ -324,10 +324,12 @@ void Scheduler::schedulerLoop() {
     int emptyRounds = 0;
     while (!stopRequested_.load()) {
         if (running_.load()) {
+            if (logCb_) logCb_("调度", "自动调度触发");
             std::string log = step();
             if (!log.empty() && log.find("所有调度队列为空") != std::string::npos) {
                 emptyRounds++;
                 if (emptyRounds >= 3) {
+                    if (logCb_) logCb_("调度", "所有进程已完成, 调度器自动停止");
                     std::cout << "\n[调度] 所有用户进程已完成, 调度器自动停止\n" << std::flush;
                     running_ = false; break;
                 }

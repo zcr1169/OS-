@@ -45,6 +45,11 @@ private:
     std::string handleMemoryCmd(const CommandParser::Command& cmd);
     std::string handlePersistenceCmd(const CommandParser::Command& cmd);
     std::string handleOverviewCmd();
+    std::string handleLogCmd(const CommandParser::Command& cmd);
+
+    // 线程日志打印
+    void logPrint(const char* role, const std::string& msg);
+    std::atomic<bool> logEnabled_{false};
 
     ProcessManager processMgr_;
     MemoryManager memoryMgr_;

@@ -158,6 +158,12 @@ print('\n--- 八、边界测试 ---')
 check('8.1 非法参数', 'register admin 123456\nlogin admin 123456\ncreate_pcb\nkill_pcb 999\nalloc -1 1\nexit\n', '用法', '不存在', '必须在')
 check('8.3 kill init', 'register admin 123456\nlogin admin 123456\nkill_pcb 1\nexit\n', '撤销失败')
 
+# log_on / log_off
+out = run('register admin 123456\nlogin admin 123456\nlog_on\ncreate_pcb lp 5 1 5\nlog_off\nexit\n')
+check_out('log_on 前台', out, '[前台]')
+check_out('log_on 后台', out, '[后台]')
+check_out('log_off', out, '线程日志已关闭')
+
 # 用户隔离
 out = run('register aa 111\nregister bb 222\nlogin aa 111\ncreate_pcb aa_proc 1 1 10\nexit\n', keep_data=True)
 out2 = run('login bb 222\nlist_pcb\nexit\n', keep_data=True)

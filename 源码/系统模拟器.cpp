@@ -39,6 +39,9 @@ OSSimulator::~OSSimulator() {
 void OSSimulator::init() {
     scheduler_.init(&processMgr_);
     scheduler_.setOnTerminate([this](int32_t pid) { memoryMgr_.freeByPid(pid); });
+    scheduler_.setLogCallback([this](const char* role, const std::string& msg) {
+        logPrint(role, msg);
+    });
 
     if (StateSerializer::fileExists(stateFilePath())) {
         if (StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_))
@@ -88,8 +91,16 @@ void OSSimulator::run() {
         if (cmd.name == "exit" || cmd.name == "quit") { std::cout << "[系统] 再见!\n"; break; }
         if (cmd.name == "help" || cmd.name == "?") { showHelp(); continue; }
 
+        // 日志命令不需要投递到后端，直接在主线程处理
+        if (cmd.name == "log_on" || cmd.name == "log_off") {
+            std::cout << handleLogCmd(cmd);
+            continue;
+        }
+
         if (isBackend_) {
+            logPrint("前台", "收到命令: " + cmd.raw + " → 推入消息队列");
             cmdQueue_.push(cmd);
+            logPrint("前台", "等待后台执行结果...");
             std::string result;
             if (resultQueue_.pop(result, 5000)) std::cout << result;
             else {
@@ -100,6 +111,7 @@ void OSSimulator::run() {
             StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
         } else {
             bool isAuthCmd = (cmd.name == "login" || cmd.name == "register" || cmd.name == "logout");
+            logPrint("前台(观察者)", "收到命令: " + cmd.raw + " → 写入 commands.txt");
             {
                 std::ofstream f(cmdFilePath(), std::ios::app);
                 if (f.is_open()) { f << input << "\n"; f.close(); }
@@ -143,8 +155,10 @@ void OSSimulator::backendLoop() {
     while (running_.load()) {
         checkObserverCommands();
         if (cmdQueue_.pop(cmd, 500)) {
+            logPrint("后台", "取出命令: " + cmd.raw + " → 开始执行");
             std::string result = executeCommand(cmd);
             resultQueue_.push(result);
+            logPrint("后台", "命令执行完毕, 结果已推入 resultQueue");
         }
     }
 }
@@ -160,7 +174,10 @@ void OSSimulator::checkObserverCommands() {
     { std::ofstream clear(cmdFilePath(), std::ios::trunc); }
     for (const auto& l : lines) {
         auto cmd = CommandParser::parse(l);
-        if (!cmd.name.empty()) executeCommand(cmd);
+        if (!cmd.name.empty()) {
+            logPrint("后台", "执行观察者命令: " + l);
+            executeCommand(cmd);
+        }
     }
     StateSerializer::save(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
 }
@@ -172,6 +189,7 @@ void OSSimulator::pollLoop() {
             StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
             localLoggedIn_ = false; localUser_.clear();
             backendThread_ = std::thread(&OSSimulator::backendLoop, this);
+            logPrint("观察者", "获取文件锁成功, 升级为后端");
             std::cout << "\n[系统] 后端离线, 本实例已升级为后端\n";
             return;
         }
@@ -180,6 +198,7 @@ void OSSimulator::pollLoop() {
         if (t != lastPollTime_) {
             lastPollTime_ = t;
             StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_);
+            logPrint("观察者", "检测到 os_state.bin 变化, 已重新加载状态");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -198,6 +217,7 @@ std::string OSSimulator::executeCommand(const CommandParser::Command& cmd) {
         return handleMemoryCmd(cmd);
     if (name == "save" || name == "load" || name == "clear_save") return handlePersistenceCmd(cmd);
     if (name == "overview") return handleOverviewCmd();
+    if (name == "log_on" || name == "log_off") return handleLogCmd(cmd);
     return "未知命令: " + cmd.raw + "\n输入 'help' 查看可用命令\n";
 }
 
@@ -543,6 +563,18 @@ std::string OSSimulator::handleOverviewCmd() {
     return oss.str();
 }
 
+// logPrint — 打印线程日志（log_on 时在每条消息前加 [角色][线程ID]）
+void OSSimulator::logPrint(const char* role, const std::string& msg) {
+    if (!logEnabled_.load()) return;
+    std::cout << "[" << role << "][" << std::this_thread::get_id() << "] " << msg << "\n" << std::flush;
+}
+
+std::string OSSimulator::handleLogCmd(const CommandParser::Command& cmd) {
+    bool on = (cmd.name == "log_on");
+    logEnabled_ = on;
+    return std::string("线程日志已") + (on ? "开启\n" : "关闭\n");
+}
+
 void OSSimulator::showWelcome() {
     std::cout << "OS Simulator v1.0 [" << (isBackend_ ? "后端" : "观察者") << "]  |  help 帮助  exit 退出\n\n";
 }
@@ -565,5 +597,6 @@ void OSSimulator::showHelp() {
         << "--- 持久化 (20分) ---\n"
         << "  save | load | clear_save\n\n"
         << "--- 可视化 (10分) ---\n"
-        << "  overview\n\n--- 系统 ---\n  help / ?   exit / quit\n\n";
+        << "  overview\n\n--- 系统 ---\n  help / ?   exit / quit\n"
+        << "  log_on / log_off    开启/关闭线程日志\n\n";
 }
