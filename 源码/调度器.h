@@ -43,7 +43,6 @@ public:
 private:
     void schedulerLoop();
     int priorityToQueue(int32_t priority) const;
-    void agePriorities();
 
     ProcessManager* pm_;
     std::vector<std::deque<int32_t>> queues_;
@@ -54,7 +53,6 @@ private:
     std::thread schedThread_;
     std::chrono::milliseconds interval_;
     static const int TIME_SLICE[3];
-    static const int AGE_INTERVAL = 10;
     int scheduleCount_;
     std::function<void(int32_t)> onTerminate_;
     std::function<void(const char*, const std::string&)> logCb_;

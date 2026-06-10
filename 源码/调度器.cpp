@@ -165,10 +165,6 @@ std::string Scheduler::step() {
             pcb->memoryBlocks.clear();
             pcb->totalMemory = 0;
             scheduleCount_++;
-            if (scheduleCount_ % AGE_INTERVAL == 0) {
-                agePriorities();
-                oss << "   ⚡ 老化触发: Q2/Q1 队首进程已提升优先级\n";
-            }
         } else {
             pcb->state = PCB::READY;
             int nextQ = std::min(qIdx + 1, 2);
@@ -181,10 +177,6 @@ std::string Scheduler::step() {
             else
                 oss << "CPU " << pcb->cpuTime << " < " << pcb->burstTime << " → 已在最低级 Q" << targetQ << ", 继续排队\n";
             scheduleCount_++;
-            if (scheduleCount_ % AGE_INTERVAL == 0) {
-                agePriorities();
-                oss << "   ⚡ 老化触发: Q2/Q1 队首进程已提升优先级\n";
-            }
         }
 
         oss << "   执行后队列: ";
@@ -301,22 +293,6 @@ int Scheduler::priorityToQueue(int32_t priority) const {
     if (priority <= 3) return 0;
     if (priority <= 7) return 1;
     return 2;
-}
-
-// agePriorities — 老化，每10次调度把Q2队首→Q1、Q1队首→Q0，防饥饿
-void Scheduler::agePriorities() {
-    auto promoteFront = [this](int srcQ, int dstQ, int32_t maxPrio) {
-        auto& src = queues_[srcQ];
-        if (src.empty()) return;
-        int32_t pid = src.front(); src.pop_front();
-        queues_[dstQ].push_back(pid);
-        if (pm_) {
-            PCB* pcb = pm_->getPCB(pid);
-            if (pcb && pcb->priority > maxPrio) pcb->priority = maxPrio;
-        }
-    };
-    promoteFront(2, 1, 7);
-    promoteFront(1, 0, 3);
 }
 
 // schedulerLoop — 后台调度线程，每2秒调一次step，连续3次空队列自动停止
