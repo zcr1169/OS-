@@ -199,6 +199,8 @@ void OSSimulator::pollLoop() {
             lastPollTime_ = t;
             StateSerializer::load(stateFilePath(), processMgr_, memoryMgr_, userMgr_, scheduler_, swappedOut_);
             logPrint("观察者", "检测到 os_state.bin 变化, 已重新加载状态");
+            if (!logEnabled_.load())
+                std::cout << "[观察者] 检测到状态文件变化, 已自动重载\n";
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
