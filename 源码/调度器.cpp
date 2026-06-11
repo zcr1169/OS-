@@ -58,7 +58,7 @@ void Scheduler::start() {
         std::lock_guard<std::recursive_mutex> pmLock(pm_->mutex());
         auto pids = pm_->getSchedulableProcesses();
         for (int32_t pid : pids) {
-            if (pid == 1) continue;
+            if (pid == 0) continue;
             PCB* pcb = pm_->getPCB(pid);
             if (pcb && pcb->state == PCB::READY && pcb->priority >= 0) {
                 enqueue(pid, 0);
@@ -206,7 +206,7 @@ std::string Scheduler::step() {
         auto pids = pm_->getSchedulableProcesses();
         int filled = 0;
         for (int32_t pid : pids) {
-            if (pid == 1) continue;
+            if (pid == 0) continue;
             PCB* pcb = pm_->getPCB(pid);
             if (pcb && pcb->state == PCB::READY) {
                 queues_[0].push_back(pid);

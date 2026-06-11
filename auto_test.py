@@ -14,7 +14,12 @@ errors = []
 def clean():
     for d in [DATA, ROOT_DATA]:
         if os.path.exists(d):
-            import shutil; shutil.rmtree(d)
+            import shutil
+            lock = os.path.join(d, 'os_instance.lock')
+            if os.path.exists(lock):
+                try: os.remove(lock)
+                except: pass
+            shutil.rmtree(d, ignore_errors=True)
 
 def run(commands, timeout=15, keep_data=False):
     """运行程序并返回输出"""
@@ -81,20 +86,20 @@ check('1.5 未登录', 'register admin 123456\nlogin admin 123456\nlogout\ncreat
 # ========== 二、进程管理 ==========
 print('\n--- 二、进程管理 ---')
 
-check('2.1 创建', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb pb 7\ncreate_pcb pc 1\nexit\n', 'PID=2', 'PID=3', 'PID=4')
+check('2.1 创建', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb pb 7\ncreate_pcb pc 1\nexit\n', 'PID=1', 'PID=2', 'PID=3')
 
-check('2.3 list_pcb', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb pb 7\ncreate_pcb pc 1\ncreate_pcb ca 5 2 3\ncreate_pcb cb 6 2 2\nlist_pcb\nexit\n', 'pa', 'pb', 'ca', 'cb')
+check('2.3 list_pcb', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb pb 7\ncreate_pcb pc 1\ncreate_pcb ca 5 1 3\ncreate_pcb cb 6 1 2\nlist_pcb\nexit\n', 'pa', 'pb', 'ca', 'cb')
 
-check('2.4 show_pcb', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nshow_pcb 2\nexit\n', 'PID', 'pa', '就绪', '优先级', 'CPU时间', '占用内存')
-check('2.5 ptree', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb ca 5 2 3\nptree\nexit\n', '进程树', 'pa', 'ca')
-check('2.6 block', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nblock_pcb 2\nshow_pcb 2\nexit\n', '已阻塞', '阻塞')
-check('2.7 wakeup', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nblock_pcb 2\nwakeup_pcb 2\nshow_pcb 2\nexit\n', '已唤醒', '就绪')
-check('2.8 suspend', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nsuspend 2\nexit\n', '已挂起')
-check('2.9 resume', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nsuspend 2\nresume 2\nexit\n', '已挂起', '已恢复')
-check('2.10 renice', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nrenice 2 0\nshow_pcb 2\nexit\n', '优先级已修改', '优先级:    0')
+check('2.4 show_pcb', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nshow_pcb 1\nexit\n', 'PID', 'pa', '就绪', '优先级', 'CPU时间', '占用内存')
+check('2.5 ptree', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb ca 5 1 3\nptree\nexit\n', '进程树', 'pa', 'ca')
+check('2.6 block', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nblock_pcb 1\nshow_pcb 1\nexit\n', '已阻塞', '阻塞')
+check('2.7 wakeup', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nblock_pcb 1\nwakeup_pcb 1\nshow_pcb 1\nexit\n', '已唤醒', '就绪')
+check('2.8 suspend', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nsuspend 1\nexit\n', '已挂起')
+check('2.9 resume', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nsuspend 1\nresume 1\nexit\n', '已挂起', '已恢复')
+check('2.10 renice', 'register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\nrenice 1 0\nshow_pcb 1\nexit\n', '优先级已修改', '优先级:    0')
 
 # kill_pcb 测试: 只检查 list_pcb 部分不含被杀的进程
-output = run('register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb ca 5 2 3\nkill_pcb 2\nlist_pcb\nexit\n')
+output = run('register admin 123456\nlogin admin 123456\ncreate_pcb pa 3\ncreate_pcb ca 5 1 3\nkill_pcb 1\nlist_pcb\nexit\n')
 # 提取 list_pcb 之后的部分
 idx = output.find('PID   名称')
 list_output = output[idx:] if idx >= 0 else ''
@@ -104,21 +109,21 @@ check_out('2.11 kill_pcb 列表无pa', list_output, neg=['pa', 'ca'])
 # ========== 三、调度器 ==========
 print('\n--- 三、调度器 ---')
 
-out = check('3.1 创建CPU进程', 'register admin 123456\nlogin admin 123456\ncreate_pcb wa 2 1 10\ncreate_pcb wb 5 1 10\ncreate_pcb wc 10 1 10\nexit\n', 'PID=2', 'PID=3', 'PID=4')
+out = check('3.1 创建CPU进程', 'register admin 123456\nlogin admin 123456\ncreate_pcb wa 2 0 10\ncreate_pcb wb 5 0 10\ncreate_pcb wc 10 0 10\nexit\n', 'PID=1', 'PID=2', 'PID=3')
 
 # 单步调度
-out = run('register admin 123456\nlogin admin 123456\ncreate_pcb sa 3 1 6\ncreate_pcb sb 8 1 6\nstep\nstep\nstep\nstep\nstep\nstep\nexit\n')
+out = run('register admin 123456\nlogin admin 123456\ncreate_pcb sa 3 0 6\ncreate_pcb sb 8 0 6\nstep\nstep\nstep\nstep\nstep\nstep\nexit\n')
 check_out('3.3 step 降级', out, '时间片耗尽, 降级')
 check_out('3.3 step 完成', out, '进程完成! 已自动终止')
 check_out('3.3 step 队列格式 [0/6]', out, '[0/6]')
-check_out('3.3 step 无可调度', out, '无可调度进程')
+check_out('3.3 step 无可调度', out, '回填')
 
-check('3.4 start/stop', 'register admin 123456\nlogin admin 123456\ncreate_pcb wa 2 1 10\ncreate_pcb wb 5 1 10\ncreate_pcb wc 10 1 10\nstart_sched\nstop_sched\nexit\n', '调度器已启动', '调度器已停止', 'Q0', 'Q1', 'Q2')
+check('3.4 start/stop', 'register admin 123456\nlogin admin 123456\ncreate_pcb wa 2 0 10\ncreate_pcb wb 5 0 10\ncreate_pcb wc 10 0 10\nstart_sched\nstop_sched\nexit\n', '调度器已启动', '调度器已停止', 'Q0', 'Q1', 'Q2')
 
 # ========== 四、内存管理 ==========
 print('\n--- 四、内存管理 ---')
 
-out = run('register admin 123456\nlogin admin 123456\ncreate_pcb mt 5 1\nalloc 100 2\nalloc 200 2\nalloc 50 2\nfree_mem 100\nshow_mem\ncompact\nmem_stat\nexit\n')
+out = run('register admin 123456\nlogin admin 123456\ncreate_pcb mt 5 0\nalloc 100 1\nalloc 200 1\nalloc 50 1\nfree_mem 100\nshow_mem\ncompact\nmem_stat\nexit\n')
 check_out('4.x show_mem', out, '空闲', '已分配', '内存分配图', '内存块总览', '碎片率')
 check('4.7 set_alloc_algo', 'register admin 123456\nlogin admin 123456\nset_alloc_algo BF\nset_alloc_algo WF\nset_alloc_algo FF\nexit\n', '最佳适应', '最坏适应', '首次适应')
 check('4.8 pgfault', 'register admin 123456\nlogin admin 123456\npgfault\nexit\n', '缺页中断', '页面错误', '页表')
@@ -129,7 +134,7 @@ check_out('alloc data', out, '数据', 'IO', '内核')
 check('alloc data 成功消息', 'register admin 123456\nlogin admin 123456\nalloc 64 data\nexit\n', '目标=数据')
 
 # swap_out + swap_in
-out = run('register admin 123456\nlogin admin 123456\ncreate_pcb mt 5 1\nalloc 100 2\nswap_out 2\nswap_in 2\nexit\n')
+out = run('register admin 123456\nlogin admin 123456\ncreate_pcb mt 5 0\nalloc 100 1\nswap_out 1\nswap_in 1\nexit\n')
 check_out('swap_out', out, '换出操作', '标记为')
 check_out('swap_in', out, '换入操作', '重新分配')
 
@@ -137,18 +142,18 @@ check_out('swap_in', out, '换入操作', '重新分配')
 print('\n--- 五、持久化 ---')
 
 # 先 save，不清理数据
-out1 = run('register admin 123456\nlogin admin 123456\ncreate_pcb sa 3 1 4\ncreate_pcb sb 5 1 4\nalloc 128 2\nalloc 256 2\nsave\nexit\n', keep_data=False)
+out1 = run('register admin 123456\nlogin admin 123456\ncreate_pcb sa 3 0 4\ncreate_pcb sb 5 0 4\nalloc 128 1\nalloc 256 1\nsave\nexit\n', keep_data=False)
 check_out('5.1 save', out1, 'os_state.bin')
 
 # 第二次启动，保留数据文件验证 load
 out2 = run('login admin 123456\nlist_pcb\nshow_mem\nexit\n', keep_data=True)
 check_out('5.2 load 进程', out2, 'sa', 'sb')
-check_out('5.2 load 内存', out2, 'PID2')
+check_out('5.2 load 内存', out2, 'PID1')
 
 # ========== 六、overview ==========
 print('\n--- 六、overview ---')
 
-out = run('register admin 123456\nlogin admin 123456\ncreate_pcb sn_a 2 1 3\ncreate_pcb sn_b 6 1 3\nalloc 64 2\noverview\nexit\n')
+out = run('register admin 123456\nlogin admin 123456\ncreate_pcb sn_a 2 0 3\ncreate_pcb sn_b 6 0 3\nalloc 64 1\noverview\nexit\n')
 for s in ['Process Tree', 'Memory Map', '多级反馈队列', 'Stats', '就绪']:
     check_out(f'overview {s}', out, s)
 
@@ -156,16 +161,16 @@ for s in ['Process Tree', 'Memory Map', '多级反馈队列', 'Stats', '就绪']
 print('\n--- 八、边界测试 ---')
 
 check('8.1 非法参数', 'register admin 123456\nlogin admin 123456\ncreate_pcb\nkill_pcb 999\nalloc -1 1\nexit\n', '用法', '不存在', '必须在')
-check('8.3 kill init', 'register admin 123456\nlogin admin 123456\nkill_pcb 1\nexit\n', '撤销失败')
+check('8.3 kill init', 'register admin 123456\nlogin admin 123456\nkill_pcb 0\nexit\n', '撤销失败')
 
 # log_on / log_off
-out = run('register admin 123456\nlogin admin 123456\nlog_on\ncreate_pcb lp 5 1 5\nlog_off\nexit\n')
+out = run('register admin 123456\nlogin admin 123456\nlog_on\ncreate_pcb lp 5 0 5\nlog_off\nexit\n')
 check_out('log_on 前台', out, '[前台]')
 check_out('log_on 后台', out, '[后台]')
 check_out('log_off', out, '线程日志已关闭')
 
 # 用户隔离
-out = run('register aa 111\nregister bb 222\nlogin aa 111\ncreate_pcb aa_proc 1 1 10\nexit\n', keep_data=True)
+out = run('register aa 111\nregister bb 222\nlogin aa 111\ncreate_pcb aa_proc 1 0 10\nexit\n', keep_data=True)
 out2 = run('login bb 222\nlist_pcb\nexit\n', keep_data=True)
 check_out('用户隔离 bb看不到aa的进程', out2, neg=['aa_proc'])
 

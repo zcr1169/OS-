@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <iomanip>
 
-ProcessManager::ProcessManager() : nextPid_(1) {}
+ProcessManager::ProcessManager() : nextPid_(0) {}
 
 // createPCB — 创建进程
 // 分配 PID，初始状态 READY，插入哈希表。如果指定了父进程则加入父进程 children 列表
@@ -37,7 +37,7 @@ bool ProcessManager::killPCB(int32_t pid,
 
     auto it = pcbs_.find(pid);
     if (it == pcbs_.end()) return false;
-    if (pid == 1) return false;
+    if (pid == 0) return false;
 
     int32_t ppid = it->second.ppid;
     if (ppid >= 0) {
@@ -80,7 +80,7 @@ void ProcessManager::killChildren(int32_t pid, std::function<void(int32_t)>& onK
 
 bool ProcessManager::blockPCB(int32_t pid) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
-    if (pid == 1) return false;
+    if (pid == 0) return false;
     auto it = pcbs_.find(pid);
     if (it == pcbs_.end()) return false;
     if (it->second.state == PCB::TERMINATED || it->second.state == PCB::SUSPENDED)
@@ -202,7 +202,7 @@ void ProcessManager::pTreeRecursive(int32_t pid, int depth,
 bool ProcessManager::suspendPCB(int32_t pid) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     auto it = pcbs_.find(pid);
-    if (it == pcbs_.end() || pid == 1) return false;
+    if (it == pcbs_.end() || pid == 0) return false;
     if (it->second.state != PCB::READY && it->second.state != PCB::RUNNING)
         return false;
     it->second.state = PCB::SUSPENDED;
@@ -264,5 +264,5 @@ std::vector<int32_t> ProcessManager::getSchedulableProcesses() const {
 void ProcessManager::clear() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     pcbs_.clear();
-    nextPid_ = 1;
+    nextPid_ = 0;
 }

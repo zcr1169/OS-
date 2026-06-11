@@ -259,7 +259,7 @@ std::string OSSimulator::handleProcessCmd(const CommandParser::Command& cmd) {
         if (cmd.args.size() < 2) return "用法: create_pcb <进程名> <优先级(0-15)> [父进程PID] [需要CPU时间]\n";
         int32_t priority;
         if (!CommandParser::toInt(cmd.args[1], priority)) return "优先级必须是整数(0-15)\n";
-        int32_t ppid = 1;
+        int32_t ppid = 0;
         if (cmd.args.size() >= 3 && !CommandParser::toInt(cmd.args[2], ppid)) return "父进程PID必须是整数\n";
         int32_t burst = 5;
         if (cmd.args.size() >= 4) {
