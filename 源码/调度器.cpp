@@ -167,9 +167,7 @@ std::string Scheduler::step() {
             scheduleCount_++;
         } else {
             pcb->state = PCB::READY;
-            int nextQ = std::min(qIdx + 1, 2);
-            int prioQ = priorityToQueue(pcb->priority);
-            int targetQ = std::min(std::max(nextQ, prioQ), 2);
+            int targetQ = std::min(qIdx + 1, 2);  // 标准MLFQ：纯粹逐级降
             queues_[targetQ].push_back(pid);
 
             if (targetQ > qIdx)
